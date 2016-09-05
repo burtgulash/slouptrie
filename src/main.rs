@@ -1,5 +1,6 @@
 use std::{iter,str};
 use std::cmp::min;
+use std::usize;
 
 struct TNode<'a> {
     prefix_size: usize,
@@ -163,44 +164,136 @@ impl Trie {
 
         false
     }
+
+    fn search_fuzzy(&self, word: &str, k: usize, search_prefix: bool)
+        -> Vec<(String, usize)>
+    {
+        let l = word.len();
+        let mut d_matrix = vec![0; (l + 1) * (l + 1)];
+        for i in 0 .. l + 1 {
+            d_matrix[i] = i;
+        }
+
+        let nl = self.nodes.len();
+        let (ch0, ch1) = (self.nodes[nl - 2], self.nodes[nl - 1]);
+
+        let mut matches = Vec::new();
+        for c in ch0 .. ch1 {
+            let wbuf = Vec::<char>::new();
+            let w = word.chars().collect::<Vec<_>>();
+            self._fuzzy(&mut matches, w, k, search_prefix,
+                        wbuf, c, l + 1, &mut d_matrix[..], 1);
+        }
+        matches
+    }
+
+    fn _fuzzy(&self, matches: &mut Vec<(String, usize)>,
+              word: Vec<char>, k: usize, search_prefix: bool,
+              mut word_sofar: Vec<char>, node: usize,
+              s: usize, mat: &mut [usize], lvl: usize)
+    {
+        let (t0, t1) = (self.termlens[node], self.termlens[node + 1]);
+        let matched = str::from_utf8(&self.terms[t0 .. t1]).unwrap();
+
+        assert!(matched.len() > 0);
+        word_sofar.extend(matched.chars());
+
+        let maxrow = min(lvl + matched.len(), word.len() + 1);
+        for j in lvl .. maxrow {
+            let mut row_min = usize::MAX;
+            mat[j * s + 0] = j;
+
+            for i in 1 .. s {
+                let substituted = if word[i - 1] == word_sofar[j - 1]
+                                  {0} else {1};
+                let replace = mat[(j - 1) * s + i - 1] + substituted;
+                let insert = mat[j * s + (i - 1)] + 1;
+                let delete = mat[(j - 1) * s + i] + 1;
+                let cost = min(replace, min(insert, delete));
+
+                mat[j * s + i] = cost;
+                row_min = min(row_min, cost);
+            }
+
+            // if all elements in the row exceed bound k, then there is
+            // no way new matches could be formed
+            if row_min > k {
+                return;
+            }
+        }
+
+        let mut distance = mat[maxrow * s - 1]; // Last item in maxrow
+
+        // If you're not searching with prefix, then add to distance
+        // number of remaining characters
+        if !search_prefix && word_sofar.len() > word.len() {
+            distance += word_sofar.len() - word.len();
+        }
+
+        if distance <= k && self.is_terminal[node] {
+            matches.push( (
+                word_sofar.iter().cloned().collect::<String>(),
+                distance
+            ) );
+        }
+
+        // find minimum in maxrow row
+        let row_min = *mat[(maxrow - 1) * s .. (maxrow) * s]
+                      .iter().min().unwrap();
+
+        // if there is a way new matches can be formed
+        // (row_min is within bounds of k), search children nodes
+        if row_min <= k {
+            let node = self.children[node];
+            if node == 0 {
+                return;
+            }
+
+            let (ch0, ch1) = (self.nodes[node], self.nodes[node + 1]);
+            for c in ch0 .. ch1 {
+                self._fuzzy(matches, word.clone(), k, search_prefix,
+                            word_sofar.clone(), c, s, mat, maxrow);
+            }
+        }
+    }
 }
 
 fn main() {
-let mut ws = vec![
-    "auto",
-    "autobus",
-    "auta",
-    "auatky",
-    "asiat",
-    "autor",
-    "atom",
-    "autorky",
-    "ati",
-    "ararat",
-    "ataturk",
-    "autista",
-    "auty",
-    "burani",
-    "burky",
-    "burrow",
-    "borrow",
-    "buráci",
-    "zmrdi",
-    "záledí",
-    "zbrna",
-    "zbraně",
-    "bobry",
-    "bobcat",
-    "bobani",
-    "zobr",
-    "zlobr",
-    "zulu",
-    "zubřice",
-    "zuby",
-    "zálezí",
-];
+    let mut ws = vec![
+        "auto",
+        "autobus",
+        "auta",
+        "auatky",
+        "asiat",
+        "autor",
+        "atom",
+        "autorky",
+        "ati",
+        "ararat",
+        "ataturk",
+        "autista",
+        "auty",
+        "burani",
+        "burky",
+        "burrow",
+        "borrow",
+        "buráci",
+        "zmrdi",
+        "záledí",
+        "zbrna",
+        "zbraně",
+        "bobry",
+        "bobcat",
+        "bobani",
+        "zobr",
+        "zlobr",
+        "zulu",
+        "zubřice",
+        "zuby",
+        "zálezí",
+    ];
 
-    let mut words = vec!["auto", "autobus", "brno", "brnena", "autori"];
+    let _words = vec!["auto", "autobus", "brno", "brnena", "autori"];
     //ws = words;
     let t = Trie::new(&mut ws);
     println!("{:?}", t.is_terminal);
@@ -214,5 +307,12 @@ let mut ws = vec![
     let prefix_search = false;
     for w in ws {
         println!("SEARCH(prefix={:?}) {}: {}", prefix_search, w, t.search(&w[..min(w.len(),3)], prefix_search));
+    }
+
+    let q = "autor";
+    let k = 2;
+    println!("FUZZY search for {} with k={}", q, k);
+    for (word, dist) in t.search_fuzzy(q, k, true) {
+        println!("matched: {}, d={}", word, dist);
     }
 }
